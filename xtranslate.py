@@ -30,7 +30,7 @@ def split_declarations(decl_str: str) -> list:
 
 def split_print_items(print_str: str) -> list:
     """
-    Splits a string of print items separated by commas, but avoids
+    Splits a string of items separated by commas, but avoids
     splitting on commas that appear inside parentheses.
     
     For example, the string:
@@ -61,8 +61,15 @@ def convert_exponentiation(text: str) -> str:
     For example, converts "i**2" to "pow(i, 2)".
     This simple regex assumes the exponentiation operands are simple identifiers or numbers.
     """
-    # The regex matches an operand followed by ** and then another operand.
     return re.sub(r'(\w+)\s*\*\*\s*(\w+)', r'pow(\1, \2)', text)
+
+def convert_double_literals(text: str) -> str:
+    """
+    Convert Fortran-style double precision literals to C++ style.
+    For example, convert "2.1d0" to "2.1e0".
+    """
+    # This regex looks for a floating point literal with a d or D exponent indicator.
+    return re.sub(r'(\d+\.\d+)[dD]([\+\-]?\d+)', r'\1e\2', text)
 
 def translate_fortran_to_cpp(fortran_code: str) -> str:
     """
@@ -78,6 +85,8 @@ def translate_fortran_to_cpp(fortran_code: str) -> str:
       - Conversion of Fortran-style array element access: var(expr) becomes var[expr-1]
         for known array variables.
       - Conversion of exponentiation expressions using ** into pow() calls.
+      - Conversion of double precision literals (e.g. 2.1d0 to 2.1e0).
+      - Translation of READ statements to use cin.
       - If no "program" block is present, wraps the translated statements in a valid main().
     """
     cpp_lines = []
@@ -205,8 +214,9 @@ def translate_fortran_to_cpp(fortran_code: str) -> str:
             parts = line.split(",", 1)
             if len(parts) > 1:
                 content = parts[1].strip()
-                # First, convert exponentiation in the print content.
+                # Convert exponentiation and double literals in the print content.
                 content = convert_exponentiation(content)
+                content = convert_double_literals(content)
                 # Then, split the content into items without splitting inside parentheses.
                 items = split_print_items(content)
                 # Finally, adjust array accesses.
@@ -215,11 +225,21 @@ def translate_fortran_to_cpp(fortran_code: str) -> str:
                 cpp_lines.append(cout_line)
             continue
 
+        # Process READ statements: convert Fortran read (*,*) into C++ cin.
+        m_read = re.match(r"read\s*\(\s*\*\s*,\s*\*\s*\)\s*(.+)", line, re.IGNORECASE)
+        if m_read:
+            var_list = m_read.group(1).strip()
+            items = split_print_items(var_list)
+            cin_line = "  cin >> " + " >> ".join(items) + ";"
+            cpp_lines.append(cin_line)
+            continue
+
         # Process assignments. Convert dble() to static_cast<double>(), adjust array accesses,
-        # and convert exponentiation expressions.
+        # convert exponentiation expressions and double literals.
         if "=" in line and not line.lower().startswith("if") and not line.lower().startswith("do"):
             line = line.replace("dble(", "static_cast<double>(")
             line = convert_exponentiation(line)
+            line = convert_double_literals(line)
             line = convert_array_access(line)
             if not line.endswith(";"):
                 line += ";"
