@@ -5,11 +5,6 @@ def split_declarations(decl_str: str) -> list:
     """
     Splits a string of declarations separated by commas,
     but does not split on commas that appear inside square brackets.
-    
-    For example:
-      "n = 3, vec(n) = [3, 5, 10]"
-    becomes:
-      ["n = 3", "vec(n) = [3, 5, 10]"]
     """
     tokens = []
     current = ""
@@ -31,22 +26,22 @@ def split_declarations(decl_str: str) -> list:
 def split_print_items(print_str: str) -> list:
     """
     Splits a string of items separated by commas, but avoids
-    splitting on commas that appear inside parentheses.
-    
-    For example, the string:
-      "i, pow(i, 2)"
-    should split into:
-      ["i", "pow(i, 2)"]
+    splitting on commas that appear inside parentheses or square brackets.
     """
     tokens = []
     current = ""
     paren_level = 0
+    bracket_level = 0
     for char in print_str:
         if char == '(':
             paren_level += 1
         elif char == ')':
             paren_level -= 1
-        if char == ',' and paren_level == 0:
+        elif char == '[':
+            bracket_level += 1
+        elif char == ']':
+            bracket_level -= 1
+        if char == ',' and paren_level == 0 and bracket_level == 0:
             tokens.append(current.strip())
             current = ""
         else:
@@ -58,69 +53,83 @@ def split_print_items(print_str: str) -> list:
 def convert_exponentiation(text: str) -> str:
     """
     Convert Fortran exponentiation using the ** operator to C++ pow() calls.
-    For example, converts "i**2" to "pow(i, 2)".
-    This simple regex assumes the exponentiation operands are simple identifiers or numbers.
+    For example, "i**2" becomes "pow(i, 2)".
     """
     return re.sub(r'(\w+)\s*\*\*\s*(\w+)', r'pow(\1, \2)', text)
 
 def convert_double_literals(text: str) -> str:
     """
     Convert Fortran-style double precision literals to C++ style.
-    For example, convert "2.1d0" to "2.1e0".
+    For example, "2.1d0" becomes "2.1e0".
     """
-    # This regex looks for a floating point literal with a d or D exponent indicator.
     return re.sub(r'(\d+\.\d+)[dD]([\+\-]?\d+)', r'\1e\2', text)
+
+def convert_array_constructor_literal(literal: str) -> str:
+    """
+    Convert a Fortran array constructor literal (e.g. "[10.0, 20.0]")
+    into a C++ vector literal. Here we assume that if any element contains
+    a dot or exponent, the type is float.
+    """
+    content = literal.strip()[1:-1].strip()  # remove surrounding brackets
+    items = [item.strip() for item in content.split(',')]
+    # Heuristically choose type: if any item looks like a floating-point number, use float.
+    is_float = any(re.search(r'[.\deED]', item) for item in items)
+    type_str = "float" if is_float else "int"
+    return f"std::vector<{type_str}>{{{', '.join(items)}}}"
+
+# Global set to record which variables (as function parameters) should be treated as vectors.
+vector_params = set()
 
 def translate_fortran_to_cpp(fortran_code: str) -> str:
     """
     Translates a subset of Fortran code into valid C++ code.
     
-    Handles:
-      - Modules as C++ namespaces.
-      - Pure functions (assumes a single int parameter and int return type).
-      - Variable declarations, including parameters and array definitions.
-      - DO loops converted to C++ for-loops.
-      - Early loop exits (if ... exit becomes if ... break).
-      - Type conversion of dble() into C++ static_cast<double>().
-      - Conversion of Fortran-style array element access: var(expr) becomes var[expr-1]
-        for known array variables.
-      - Conversion of exponentiation expressions using ** into pow() calls.
-      - Conversion of double precision literals (e.g. 2.1d0 to 2.1e0).
-      - Translation of READ statements to use cin.
-      - If no "program" block is present, wraps the translated statements in a valid main().
+    Special handling is provided for functions with assumed-shape (1-D) real array arguments:
+      - Such parameters are translated as "const std::vector<float>&".
+      - DO loops in these functions using "do i=1,n" are translated to a 0-indexed loop.
+      - Array accesses for these parameters use 0-based indexing (i.e. "x[i]" instead of "x[(i)-1]").
+    
+    Other features such as exponentiation, double literal conversion, print and read statements,
+    DO loops, and module usage are also translated.
     """
     cpp_lines = []
-    array_vars = set()   # Set of variable names known to be arrays.
+    array_vars = set()  # Variables declared as arrays in main.
     function_result_var = None
-    in_function = False  # Used to skip duplicate declarations in functions.
-    main_declared = False  # Tracks whether we've seen a "program" declaration.
+    func_header_info = None  # Store (func_name, param, result_var)
+    in_function = False
+    main_declared = False
+    # Flag to indicate that the current function has a vector parameter.
+    current_function_is_vector = False
 
     def convert_array_access(text: str) -> str:
         """
-        For every known array variable, replace Fortran-style array access,
-        e.g. vec(expr) with C++ style: vec[expr-1].
+        For every variable known to be an array (either main or function parameter),
+        replace Fortran-style array access "x(expr)" with:
+         - If x is a function vector parameter and we are in function context, use "x[expr]".
+         - Otherwise, use "x[(expr)-1]".
         """
-        for var in array_vars:
+        for var in array_vars.union(vector_params):
             pattern = re.compile(rf"\b{var}\(([^)]+)\)")
-            text = re.sub(pattern, lambda m: f"{var}[{m.group(1)}-1]", text)
+            def repl(m):
+                expr = m.group(1).strip()
+                if in_function and (var in vector_params):
+                    return f"{var}[{expr}]"
+                else:
+                    return f"{var}[({expr})-1]"
+            text = re.sub(pattern, repl, text)
         return text
 
     lines = fortran_code.splitlines()
-
     for raw_line in lines:
         line = raw_line.strip()
-
-        # Skip empty lines.
         if not line:
             continue
-
-        # Skip lines that don't need translation.
         if re.match(r"implicit\s+none", line, re.IGNORECASE):
             continue
         if line.lower() == "contains":
             continue
 
-        # Process module definitions.
+        # Module definitions.
         m_mod = re.match(r"module\s+(\w+)", line, re.IGNORECASE)
         if m_mod:
             mod_name = m_mod.group(1)
@@ -130,26 +139,51 @@ def translate_fortran_to_cpp(fortran_code: str) -> str:
             cpp_lines.append("} // end namespace")
             continue
 
-        # Process pure function definitions.
-        m_func = re.match(r"pure\s+function\s+(\w+)\s*\((\w+)\)\s+result\((\w+)\)", line, re.IGNORECASE)
+        # Function header.
+        m_func = re.match(r"function\s+(\w+)\s*\((\w+)\)\s+result\((\w+)\)", line, re.IGNORECASE)
         if m_func:
             func_name, param, result_var = m_func.groups()
-            function_result_var = result_var
+            func_header_info = (func_name, param, result_var)
             in_function = True
-            cpp_lines.append(f"  int {func_name}(int {param}) {{")
-            continue
-        # Skip duplicate declarations inside functions.
-        if in_function and re.search(r"intent\s*\(in\)", line, re.IGNORECASE):
-            continue
-        if re.match(r"end\s+function", line, re.IGNORECASE):
-            if function_result_var:
-                cpp_lines.append(f"    return {function_result_var};")
-            cpp_lines.append("  }")
-            function_result_var = None
-            in_function = False
+            cpp_lines.append("/* function header pending */")
             continue
 
-        # Process the program entry point.
+        # Inside function, check for real intent(in) declarations.
+        m_real_param = re.match(r"real,\s*intent\s*\(in\)\s*::\s*(.+)", line, re.IGNORECASE)
+        if m_real_param and in_function:
+            decl = m_real_param.group(1).strip()
+            for var in [v.strip() for v in decl.split(',')]:
+                if re.search(r"\(:\)", var):
+                    var_name = var.split('(')[0].strip()
+                    vector_params.add(var_name)
+                    current_function_is_vector = True
+            continue
+
+        # End of function.
+        if in_function and re.match(r"end\s+function", line, re.IGNORECASE):
+            # Insert return statement using the result variable.
+            if func_header_info is not None:
+                func_name, param, result_var = func_header_info
+                ret_type = "float"  # Assuming real -> float.
+                if param in vector_params:
+                    header = f"  {ret_type} {func_name}(const std::vector<float>& {param}) {{"
+                    vector_params.add(param)
+                else:
+                    header = f"  {ret_type} {func_name}(int {param}) {{"
+                # Replace the pending header.
+                for i, l in enumerate(cpp_lines):
+                    if "/* function header pending */" in l:
+                        cpp_lines[i] = header
+                        break
+                # Insert the return statement.
+                cpp_lines.append(f"    return {result_var};")
+            cpp_lines.append("  }")
+            in_function = False
+            current_function_is_vector = False
+            func_header_info = None
+            continue
+
+        # Program entry.
         m_prog = re.match(r"program\s+(\w+)", line, re.IGNORECASE)
         if m_prog:
             main_declared = True
@@ -160,25 +194,24 @@ def translate_fortran_to_cpp(fortran_code: str) -> str:
             cpp_lines.append("}")
             continue
 
-        # Process module usage.
+        # Module usage.
         m_use = re.match(r"use\s+(\w+)", line, re.IGNORECASE)
         if m_use:
             mod_name = m_use.group(1)
             cpp_lines.append(f"  using namespace {mod_name};")
             continue
 
-        # Process parameter and array declarations.
+        # Parameter and array declarations.
         m_param = re.match(r"integer,\s*parameter\s*::\s*(.+)", line, re.IGNORECASE)
         if m_param:
             decl_str = m_param.group(1)
             decls = split_declarations(decl_str)
             for decl in decls:
-                # Handle array declarations, e.g., vec(n) = [3, 5, 10]
                 m_arr = re.match(r"(\w+)\s*\(\s*(\w+)\s*\)\s*=\s*\[(.+)\]", decl)
                 if m_arr:
                     var_name, size, values = m_arr.groups()
                     array_vars.add(var_name)
-                    cpp_lines.append(f"  int {var_name}[{size}] = {{{values}}};")
+                    cpp_lines.append(f"  std::vector<int> {var_name} = {{{values}}};")
                 else:
                     m_simple = re.match(r"(\w+)\s*=\s*(\w+)", decl)
                     if m_simple:
@@ -186,46 +219,65 @@ def translate_fortran_to_cpp(fortran_code: str) -> str:
                         cpp_lines.append(f"  const int {var_name} = {value};")
             continue
 
-        # Process plain variable declarations.
+        # Real declarations.
+        m_real_decl = re.match(r"real\s*::\s*(.+)", line, re.IGNORECASE)
+        if m_real_decl:
+            decl = m_real_decl.group(1).strip()
+            vars_decl = [v.strip() for v in decl.split(',')]
+            for var in vars_decl:
+                if '(' in var:
+                    m_arr = re.match(r"(\w+)\((.+)\)", var)
+                    if m_arr:
+                        var_name, dims = m_arr.groups()
+                        dims = dims.strip()
+                        if dims == ":":
+                            vector_params.add(var_name)
+                        else:
+                            cpp_lines.append(f"  std::vector<float> {var_name}({dims});")
+                            array_vars.add(var_name)
+                else:
+                    cpp_lines.append(f"  float {var};")
+            continue
+
+        # Integer declarations.
         m_int_decl = re.match(r"integer\s*::\s*(.+)", line, re.IGNORECASE)
         if m_int_decl:
             decl = m_int_decl.group(1).strip()
             cpp_lines.append(f"  int {decl};")
             continue
 
-        m_double_decl = re.match(r"double\s+precision\s*::\s*(.+)", line, re.IGNORECASE)
-        if m_double_decl:
-            decl = m_double_decl.group(1).strip()
-            cpp_lines.append(f"  double {decl};")
-            continue
-
-        # Process DO loops, e.g., "do i=2,n"
+        # DO loops.
         m_do = re.match(r"do\s+(\w+)\s*=\s*(\w+)\s*,\s*(\w+)", line, re.IGNORECASE)
         if m_do:
             var, start, end = m_do.groups()
-            cpp_lines.append(f"  for (int {var} = {start}; {var} <= {end}; {var}++) {{")
+            if in_function and current_function_is_vector and start == "1":
+                cpp_lines.append(f"  for (int {var} = 0; {var} < {end}; ++{var}) {{")
+            else:
+                cpp_lines.append(f"  for (int {var} = {start}; {var} <= {end}; {var}++) {{")
             continue
         if re.match(r"end\s+do", line, re.IGNORECASE):
             cpp_lines.append("  }")
             continue
 
-        # Process print statements: convert Fortran "print*," into C++ cout.
+        # Print statements.
         if line.lower().startswith("print*"):
             parts = line.split(",", 1)
             if len(parts) > 1:
                 content = parts[1].strip()
-                # Convert exponentiation and double literals in the print content.
                 content = convert_exponentiation(content)
                 content = convert_double_literals(content)
-                # Then, split the content into items without splitting inside parentheses.
                 items = split_print_items(content)
-                # Finally, adjust array accesses.
-                converted_items = [convert_array_access(item) for item in items]
+                converted_items = []
+                for item in items:
+                    if item.startswith('[') and item.endswith(']'):
+                        converted_items.append(convert_array_constructor_literal(item))
+                    else:
+                        converted_items.append(convert_array_access(item))
                 cout_line = "  cout << " + " << \" \" << ".join(converted_items) + " << endl;"
                 cpp_lines.append(cout_line)
             continue
 
-        # Process READ statements: convert Fortran read (*,*) into C++ cin.
+        # READ statements.
         m_read = re.match(r"read\s*\(\s*\*\s*,\s*\*\s*\)\s*(.+)", line, re.IGNORECASE)
         if m_read:
             var_list = m_read.group(1).strip()
@@ -234,8 +286,7 @@ def translate_fortran_to_cpp(fortran_code: str) -> str:
             cpp_lines.append(cin_line)
             continue
 
-        # Process assignments. Convert dble() to static_cast<double>(), adjust array accesses,
-        # convert exponentiation expressions and double literals.
+        # Assignments.
         if "=" in line and not line.lower().startswith("if") and not line.lower().startswith("do"):
             line = line.replace("dble(", "static_cast<double>(")
             line = convert_exponentiation(line)
@@ -246,7 +297,7 @@ def translate_fortran_to_cpp(fortran_code: str) -> str:
             cpp_lines.append("  " + line)
             continue
 
-        # Process IF exit statements.
+        # IF exit statements.
         m_if_exit = re.match(r"if\s*\((.+)\)\s*exit", line, re.IGNORECASE)
         if m_if_exit:
             condition = m_if_exit.group(1)
@@ -257,17 +308,15 @@ def translate_fortran_to_cpp(fortran_code: str) -> str:
         if re.match(r"^end\s*$", line, re.IGNORECASE):
             continue
 
-        # Add any remaining non-empty lines.
         cpp_lines.append("  " + line)
 
-    # If no main() block was declared, wrap the code in main().
     if not main_declared:
         cpp_lines = ["int main() {"] + ["  " + ln for ln in cpp_lines] + ["  return 0;", "}"]
 
-    # Prepend necessary headers.
     includes = (
         "#include <iostream>\n"
         "#include <cmath>\n"
+        "#include <vector>\n"
         "using namespace std;\n\n"
     )
     cpp_code = includes + "\n".join(cpp_lines)
@@ -279,7 +328,6 @@ if __name__ == "__main__":
         sys.exit(1)
     
     source_file = sys.argv[1]
-    
     try:
         with open(source_file, "r") as f:
             fortran_code = f.read()
