@@ -28,9 +28,45 @@ def split_declarations(decl_str: str) -> list:
         tokens.append(current.strip())
     return tokens
 
+def split_print_items(print_str: str) -> list:
+    """
+    Splits a string of print items separated by commas, but avoids
+    splitting on commas that appear inside parentheses.
+    
+    For example, the string:
+      "i, pow(i, 2)"
+    should split into:
+      ["i", "pow(i, 2)"]
+    """
+    tokens = []
+    current = ""
+    paren_level = 0
+    for char in print_str:
+        if char == '(':
+            paren_level += 1
+        elif char == ')':
+            paren_level -= 1
+        if char == ',' and paren_level == 0:
+            tokens.append(current.strip())
+            current = ""
+        else:
+            current += char
+    if current:
+        tokens.append(current.strip())
+    return tokens
+
+def convert_exponentiation(text: str) -> str:
+    """
+    Convert Fortran exponentiation using the ** operator to C++ pow() calls.
+    For example, converts "i**2" to "pow(i, 2)".
+    This simple regex assumes the exponentiation operands are simple identifiers or numbers.
+    """
+    # The regex matches an operand followed by ** and then another operand.
+    return re.sub(r'(\w+)\s*\*\*\s*(\w+)', r'pow(\1, \2)', text)
+
 def translate_fortran_to_cpp(fortran_code: str) -> str:
     """
-    Translates a subset of Fortran code into C++ code.
+    Translates a subset of Fortran code into valid C++ code.
     
     Handles:
       - Modules as C++ namespaces.
@@ -41,11 +77,14 @@ def translate_fortran_to_cpp(fortran_code: str) -> str:
       - Type conversion of dble() into C++ static_cast<double>().
       - Conversion of Fortran-style array element access: var(expr) becomes var[expr-1]
         for known array variables.
+      - Conversion of exponentiation expressions using ** into pow() calls.
+      - If no "program" block is present, wraps the translated statements in a valid main().
     """
     cpp_lines = []
     array_vars = set()   # Set of variable names known to be arrays.
     function_result_var = None
     in_function = False  # Used to skip duplicate declarations in functions.
+    main_declared = False  # Tracks whether we've seen a "program" declaration.
 
     def convert_array_access(text: str) -> str:
         """
@@ -61,6 +100,10 @@ def translate_fortran_to_cpp(fortran_code: str) -> str:
 
     for raw_line in lines:
         line = raw_line.strip()
+
+        # Skip empty lines.
+        if not line:
+            continue
 
         # Skip lines that don't need translation.
         if re.match(r"implicit\s+none", line, re.IGNORECASE):
@@ -98,7 +141,9 @@ def translate_fortran_to_cpp(fortran_code: str) -> str:
             continue
 
         # Process the program entry point.
-        if re.match(r"program\s+(\w+)", line, re.IGNORECASE):
+        m_prog = re.match(r"program\s+(\w+)", line, re.IGNORECASE)
+        if m_prog:
+            main_declared = True
             cpp_lines.append("int main() {")
             continue
         if re.match(r"end\s+program", line, re.IGNORECASE):
@@ -160,15 +205,21 @@ def translate_fortran_to_cpp(fortran_code: str) -> str:
             parts = line.split(",", 1)
             if len(parts) > 1:
                 content = parts[1].strip()
-                items = [x.strip() for x in content.split(",")]
+                # First, convert exponentiation in the print content.
+                content = convert_exponentiation(content)
+                # Then, split the content into items without splitting inside parentheses.
+                items = split_print_items(content)
+                # Finally, adjust array accesses.
                 converted_items = [convert_array_access(item) for item in items]
                 cout_line = "  cout << " + " << \" \" << ".join(converted_items) + " << endl;"
                 cpp_lines.append(cout_line)
             continue
 
-        # Process assignments. Convert dble() to static_cast<double>() and adjust array accesses.
+        # Process assignments. Convert dble() to static_cast<double>(), adjust array accesses,
+        # and convert exponentiation expressions.
         if "=" in line and not line.lower().startswith("if") and not line.lower().startswith("do"):
             line = line.replace("dble(", "static_cast<double>(")
+            line = convert_exponentiation(line)
             line = convert_array_access(line)
             if not line.endswith(";"):
                 line += ";"
@@ -182,9 +233,16 @@ def translate_fortran_to_cpp(fortran_code: str) -> str:
             cpp_lines.append(f"  if ({condition}) break;")
             continue
 
+        # Skip a lone "end" line.
+        if re.match(r"^end\s*$", line, re.IGNORECASE):
+            continue
+
         # Add any remaining non-empty lines.
-        if line:
-            cpp_lines.append("  " + line)
+        cpp_lines.append("  " + line)
+
+    # If no main() block was declared, wrap the code in main().
+    if not main_declared:
+        cpp_lines = ["int main() {"] + ["  " + ln for ln in cpp_lines] + ["  return 0;", "}"]
 
     # Prepend necessary headers.
     includes = (
