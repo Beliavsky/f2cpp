@@ -76,3 +76,25 @@ int main() {
   return 0;
 }
 ```
+
+```fortran
+! check handling of comments
+! standalone comment
+print*,"hello! bye!" ! inline comment
+end
+```
+becomes
+
+```cpp
+#include <cmath>
+#include <iostream>
+#include <vector>
+using namespace std;
+
+int main() {
+  // check handling of comments
+  // standalone comment
+  cout << "hello! bye!" << endl; // inline comment
+  return 0;
+}
+```
