@@ -1,7 +1,7 @@
 ### f2cpp
 
-Partial Fortran to C++ translator in Python. For example, `python xtranslate.py xvec.f90`
-for `xvec.f90` having code
+Partial Fortran to C++ translator in Python. For example, `python xtranslate.py xvec.f90` followed by
+running [clang-format](https://clang.llvm.org/docs/ClangFormat.html) on the generated C++ code, for `xvec.f90` having code
 
 ```fortran
 module m
@@ -38,37 +38,36 @@ end program main
 ```
 
 gives
-
 ```cpp
-#include <iostream>
 #include <cmath>
+#include <iostream>
 #include <vector>
 using namespace std;
 
 namespace m {
-  float mean(const std::vector<float>& x) {
+float mean(const std::vector<float> &x) {
   float xmean;
   int i, n;
   float xsum;
   xsum = 0.0;
   n = size(x);
   for (int i = 0; i < n; ++i) {
-  xsum = xsum + x[i];
+    xsum = xsum + x[i];
   }
-  xmean = xsum/n;
-    return xmean;
-  }
-} // end namespace
+  xmean = xsum / n;
+  return xmean;
+}
+} // namespace m
 int main() {
   using namespace m;
   const int n = 3;
   std::vector<float> x(n);
   int i;
-  x[(1)-1] = 10.0;
-  x[(2)-1] = 20.0;
-  x[(3)-1] = 30.0;
+  x[(1) - 1] = 10.0;
+  x[(2) - 1] = 20.0;
+  x[(3) - 1] = 30.0;
   for (int i = 1; i <= n; i++) {
-  cout << i << " " << 10*x[(i)-1] << endl;
+    cout << i << " " << 10 * x[(i)-1] << endl;
   }
   cout << mean(x) << endl;
   return 0;
