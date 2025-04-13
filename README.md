@@ -119,3 +119,70 @@ int main() {
   return 0;
 }
 ```
+```fortran
+! demonstrate function, array constructor, and
+! looping over array elements
+module m
+implicit none
+contains
+function factorial(n) result(nfac)
+integer, intent(in) :: n
+integer :: nfac
+integer :: i
+nfac = 1
+do i=2,n
+   nfac = nfac*i
+end do
+end function factorial
+end module m
+
+program main
+use m
+implicit none
+integer, parameter :: n = 3, vec(n) = [3, 5, 10]
+integer :: i, fac
+real :: xfac
+do i=1,n
+   fac = factorial(vec(i))
+   xfac = fac
+   print*,vec(i), fac, sqrt(xfac)
+   if (fac > 100) exit
+end do
+end program main
+```
+becomes
+```cpp
+#include <cmath>
+#include <iostream>
+#include <vector>
+using namespace std;
+
+// demonstrate function, array constructor, and
+// looping over array elements
+namespace m {
+float factorial(int n) {
+  int nfac;
+  int i;
+  nfac = 1;
+  for (int i = 2; i <= n; i++) {
+    nfac = nfac * i;
+  }
+  return nfac;
+}
+} // namespace m
+int main() {
+  using namespace m;
+  const int n = 3;
+  std::vector<int> vec = {3, 5, 10};
+  int i, fac;
+  float xfac;
+  for (int i = 1; i <= n; i++) {
+    fac = factorial(vec[(i)-1]);
+    xfac = fac;
+    cout << vec[(i)-1] << " " << fac << " " << sqrt(xfac) << endl;
+    if (fac > 100)
+      break;
+  }
+  return 0;
+}
+```
