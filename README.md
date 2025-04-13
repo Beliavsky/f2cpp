@@ -186,3 +186,29 @@ int main() {
   return 0;
 }
 ```
+```fortran
+! simple input and output
+implicit none
+integer :: i, j
+print*,"enter two numbers"
+read (*,*) i, j
+print*,"sum of", i, "and", j, "is", i+j
+end
+```
+becomes
+```cpp
+#include <cmath>
+#include <iostream>
+#include <vector>
+using namespace std;
+
+int main() {
+  // simple input and output
+  int i, j;
+  cout << "enter two numbers" << endl;
+  cin >> i >> j;
+  cout << "sum of" << " " << i << " " << "and" << " " << j << " " << "is" << " "
+       << i + j << endl;
+  return 0;
+}
+```
