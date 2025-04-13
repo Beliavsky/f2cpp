@@ -40,8 +40,6 @@ end program main
 gives
 
 ```cpp
-// Translated C++ code:
-// ---------------------
 #include <iostream>
 #include <cmath>
 #include <vector>
