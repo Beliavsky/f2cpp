@@ -1,4 +1,5 @@
 import re
+import sys
 
 def split_declarations(decl_str: str) -> list:
     """
@@ -181,7 +182,7 @@ def translate_fortran_to_cpp(fortran_code: str) -> str:
             cpp_lines.append(f"  if ({condition}) break;")
             continue
 
-        # Add any remaining non-empty lines as-is.
+        # Add any remaining non-empty lines.
         if line:
             cpp_lines.append("  " + line)
 
@@ -195,36 +196,20 @@ def translate_fortran_to_cpp(fortran_code: str) -> str:
     return cpp_code
 
 if __name__ == "__main__":
-    # Sample Fortran code.
-    fortran_sample = """\
-module m
-implicit none
-contains
-pure function factorial(n) result(nfac)
-integer, intent(in) :: n
-integer :: nfac
-integer :: i
-nfac = 1
-do i=2,n
-   nfac = nfac*i
-end do
-end function factorial
-end module m
-
-program main
-use m
-implicit none
-integer, parameter :: n = 3, vec(n) = [3, 5, 10]
-integer :: i, fac
-double precision :: xfac
-do i=1,n
-   fac = factorial(vec(i))
-   xfac = dble(fac)
-   print*,vec(i), fac, sqrt(xfac)
-   if (fac > 100) exit
-end do
-end program main
-"""
-    cpp_output = translate_fortran_to_cpp(fortran_sample)
+    if len(sys.argv) != 2:
+        print("Usage: python translator.py <fortran_source_file>")
+        sys.exit(1)
+    
+    source_file = sys.argv[1]
+    
+    try:
+        with open(source_file, "r") as f:
+            fortran_code = f.read()
+    except FileNotFoundError:
+        print(f"Error: File '{source_file}' not found.")
+        sys.exit(1)
+    
+    cpp_code = translate_fortran_to_cpp(fortran_code)
     print("// Translated C++ code:")
-    print(cpp_output)
+    print("// ---------------------")
+    print(cpp_code)
