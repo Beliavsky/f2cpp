@@ -96,3 +96,26 @@ int main() {
   return 0;
 }
 ```
+
+```fortran
+! math functions
+real :: x
+x = 3.14e0
+print*, x, sin(x), cos(x), exp(x)
+end
+```
+becomes
+```cpp
+#include <cmath>
+#include <iostream>
+#include <vector>
+using namespace std;
+
+int main() {
+  // math functions
+  float x;
+  x = 3.14e0;
+  cout << x << " " << sin(x) << " " << cos(x) << " " << exp(x) << endl;
+  return 0;
+}
+```
