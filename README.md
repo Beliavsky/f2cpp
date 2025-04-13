@@ -73,7 +73,7 @@ int main() {
   return 0;
 }
 ```
-
+The Fortran code
 ```fortran
 ! check handling of comments
 ! standalone comment
@@ -95,7 +95,7 @@ int main() {
   return 0;
 }
 ```
-
+The Fortran code
 ```fortran
 ! math functions
 real :: x
@@ -118,6 +118,7 @@ int main() {
   return 0;
 }
 ```
+The Fortran code
 ```fortran
 ! demonstrate function, array constructor, and
 ! looping over array elements
@@ -185,6 +186,7 @@ int main() {
   return 0;
 }
 ```
+The Fortran code
 ```fortran
 ! simple input and output
 implicit none
