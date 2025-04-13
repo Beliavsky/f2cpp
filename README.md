@@ -1,7 +1,7 @@
 ### f2cpp
 
 Partial Fortran to C++ translator in Python. For example, `python xtranslate.py xvec.f90`
-for `xvec.f90` being
+for `xvec.f90` having code
 
 ```fortran
 module m
